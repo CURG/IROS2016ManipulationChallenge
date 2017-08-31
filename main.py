@@ -23,6 +23,9 @@ import importlib
 import os
 import time
 import sys
+import math
+
+delta = 0.001
 
 box_dims = (0.5,0.5,0.3)
 shelf_dims = (0.4,0.4,0.3)
@@ -31,7 +34,7 @@ shelf_height = 0.7
 moving_base_template_fn = 'data/robots/moving_base_template.rob'
 object_template_fn = 'data/objects/object_template.obj'
 objects = {}
-objects['ycb'] = [f for f in sorted(os.listdir('data/objects/ycb'))]
+#objects['ycb'] = [f for f in sorted(os.listdir('data/objects/ycb'))]
 objects['apc2015'] = [f for f in sorted(os.listdir('data/objects/apc2015'))]
 robots = ['reflex_col']
 
@@ -200,7 +203,7 @@ def launch_simple(robotname,object_set,objectname,use_box=False):
 	if use_box:
 		box = make_box(world,*box_dims)
 		object.setTransform(*se3.mul((so3.identity(),[0,0,0.01]),object.getTransform()))
-	doedit = True
+	doedit = False
 	xform = resource.get("%s/default_initial_%s.xform"%(object_set,robotname),description="Initial hand transform",default=robot.link(5).getTransform(),world=world)
 	set_moving_base_xform(robot,xform[0],xform[1])
 	xform = resource.get("%s/initial_%s_%s.xform"%(object_set,robotname,objectname),description="Initial hand transform",default=robot.link(5).getTransform(),world=world,doedit=False)
@@ -232,7 +235,7 @@ def launch_simple(robotname,object_set,objectname,use_box=False):
 
 	#the result of simple_controller.make() is now attached to control the robot
 	import simple_controller
-	sim.setController(robot,simple_controller.make(sim,hand,program.dt))
+	sim.setController(robot,simple_controller.make(sim,hand,delta))
 
 	#the next line latches the current configuration in the PID controller...
 	sim.controller(0).setPIDCommand(robot.getConfig(),robot.getVelocity())
@@ -325,7 +328,7 @@ def launch_balls(robotname,num_balls=10):
 
 	#A StateMachineController instance is now attached to control the robot
 	import balls_controller
-	sim.setController(robot,balls_controller.make(sim,hand,program.dt))
+	sim.setController(robot,balls_controller.make(sim,hand,delta))
 
 	#the next line latches the current configuration in the PID controller...
 	sim.controller(0).setPIDCommand(robot.getConfig(),robot.getVelocity())
@@ -472,7 +475,7 @@ def launch_shelf(robotname,objects):
 
 	#controlfunc is now attached to control the robot
 	import shelf_controller
-	sim.setController(robot,shelf_controller.make(sim,hand,program.dt))
+	sim.setController(robot,shelf_controller.make(sim,hand,delta))
 
 	#the next line latches the current configuration in the PID controller...
 	sim.controller(0).setPIDCommand(robot.getConfig(),robot.getVelocity())

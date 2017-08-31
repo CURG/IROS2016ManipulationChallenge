@@ -25,21 +25,28 @@ def make(sim,hand,dt):
 			f2_contact = [s.getMeasurements()[0] for s in f2_proximal_takktile_sensors] + [s.getMeasurements()[0] for s in f2_distal_takktile_sensors]
 			f3_contact = [s.getMeasurements()[0] for s in f3_proximal_takktile_sensors] + [s.getMeasurements()[0] for s in f3_distal_takktile_sensors]
 			print "Contact sensors"
+                        print "sim.getTime(): "  + str(sim.getTime())
 			print "  finger 1:",[int(v) for v in f1_contact]
 			print "  finger 2:",[int(v) for v in f2_contact]
 			print "  finger 3:",[int(v) for v in f3_contact]
 		except:
 			pass
-		t_lift = 1
+		t_lift = 6
 		lift_traj_duration = 0.5
 		if sim.getTime() < 0.05:
 			#the controller sends a command to the hand: f1,f2,f3,preshape
 			hand.setCommand([0.2,0.2,0.2,0])
 		if sim.getTime() > t_lift:
 			#the controller sends a command to the base after 1 s to lift the object
+                        print "We are lifting!!!!"
 			t_traj = min(1, max(0, (sim.getTime() - t_lift) / lift_traj_duration))
+                        print "t_traj: " + str(t_traj)
 			desired = se3.mul((so3.identity(), [0, 0, 0.10 * t_traj]), xform)
+                        print "desired[0]: " + str(desired[0])
+                        print "desired[1]: " + str(desired[1])
 			send_moving_base_xform_PID(controller, desired[0], desired[1])
 		#need to manually call the hand emulator
+                print type(hand)
+
 		hand.process({},dt)
 	return controlfunc
