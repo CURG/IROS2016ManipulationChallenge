@@ -1,3 +1,6 @@
+
+import argparse
+import random
 import pkg_resources
 pkg_resources.require("klampt>=0.6.2")
 if pkg_resources.get_distribution("klampt").version >= '0.7':
@@ -199,10 +202,10 @@ def launch_simple(robotname,object_set,objectname,use_box=False):
 	world = WorldModel()
 	world.loadElement("data/terrains/plane.env")
 	robot = make_moving_base_robot(robotname,world)
-	object = make_object(object_set,objectname,world)
+	m_object = make_object(object_set,objectname,world)
 	if use_box:
 		box = make_box(world,*box_dims)
-		object.setTransform(*se3.mul((so3.identity(),[0,0,0.01]),object.getTransform()))
+		m_object.setTransform(*se3.mul((so3.identity(),[0,0,0.01]),m_object.getTransform()))
 	doedit = False
 	xform = resource.get("%s/default_initial_%s.xform"%(object_set,robotname),description="Initial hand transform",default=robot.link(5).getTransform(),world=world)
 	set_moving_base_xform(robot,xform[0],xform[1])
@@ -265,308 +268,24 @@ def launch_simple(robotname,object_set,objectname,use_box=False):
 	return
 
 
-
-def launch_balls(robotname,num_balls=10):
-	"""Launches a very simple program that simulates a robot grasping an object from one of the
-	databases. It first allows a user to position the robot's free-floating base in a GUI. 
-	Then, it sets up a simulation with those initial conditions, and launches a visualization.
-	The controller closes the hand, and then lifts the hand upward.  The output of the robot's
-	tactile sensors are printed to the console.
-	"""
-	world = WorldModel()
-	world.loadElement("data/terrains/plane.env")
-	maxlayer = 16
-	numlayers = int(math.ceil(float(num_balls)/float(maxlayer)))
-	for layer in xrange(numlayers):
-		if layer + 1 == numlayers:
-			ballsperlayer = num_balls%maxlayer
-		else:
-			ballsperlayer = maxlayer
-		w = int(math.ceil(math.sqrt(ballsperlayer)))
-		h = int(math.ceil(float(ballsperlayer)/float(w)))
-		for i in xrange(ballsperlayer):
-			bid = world.loadElement("data/objects/sphere_10cm.obj")
-			if bid < 0:
-				raise RuntimeError("data/objects/sphere_10cm.obj couldn't be loaded")
-			ball = world.rigidObject(world.numRigidObjects()-1)
-			R = so3.identity()
-			x = i % w
-			y = i / w
-			x = (x - (w-1)*0.5)*box_dims[0]*0.7/(w-1)
-			y = (y - (h-1)*0.5)*box_dims[1]*0.7/(h-1)
-			t = [x,y,0.08 + layer*0.11]
-			t[0] += random.uniform(-0.005,0.005)
-			t[1] += random.uniform(-0.005,0.005)
-			ball.setTransform(R,t)
-	robot = make_moving_base_robot(robotname,world)
-	box = make_box(world,*box_dims)
-	box2 = make_box(world,*box_dims)
-	box2.geometry().translate((0.7,0,0))
-	xform = resource.get("balls/default_initial_%s.xform"%(robotname,),description="Initial hand transform",default=robot.link(5).getTransform(),world=world,doedit=True)
-	if not xform:
-		print "User quit the program"
-		return
-	#this sets the initial condition for the simulation
-	set_moving_base_xform(robot,xform[0],xform[1])
-
-	#now the simulation is launched
-	program = GLSimulationProgram(world)  
-	sim = program.sim
-
-	#setup some simulation parameters
-	visPreshrink = True   #turn this to true if you want to see the "shrunken" models used for collision detection
-	for l in range(robot.numLinks()):
-		sim.body(robot.link(l)).setCollisionPreshrink(visPreshrink)
-	for l in range(world.numRigidObjects()):
-		sim.body(world.rigidObject(l)).setCollisionPreshrink(visPreshrink)
-
-	#create a hand emulator from the given robot name
-	module = importlib.import_module('plugins.'+robotname)
-	#emulator takes the robot index (0), start link index (6), and start driver index (6)
-	hand = module.HandEmulator(sim,0,6,6)
-	sim.addEmulator(0,hand)
-
-	#A StateMachineController instance is now attached to control the robot
-	import balls_controller
-	sim.setController(robot,balls_controller.make(sim,hand,delta))
-
-	#the next line latches the current configuration in the PID controller...
-	sim.controller(0).setPIDCommand(robot.getConfig(),robot.getVelocity())
-
-	"""
-	#this code uses the GLSimulationProgram structure, which gives a little more control over the visualization
-	vis.setPlugin(program)
-	vis.show()
-	while vis.shown():
-		time.sleep(0.1)
-	return
-	"""
-
-	#this code manually updates the visualization
-	vis.add("world",world)
-	vis.show()
-	t0 = time.time()
-	while vis.shown():
-		vis.lock()
-		sim.simulate(0.01)
-		sim.updateWorld()
-		vis.unlock()
-		t1 = time.time()
-		time.sleep(max(0.01-(t1-t0),0.001))
-		t0 = t1
-	return
-
-def xy_randomize(obj,bmin,bmax):
-	R,t = obj.getTransform()
-	obmin,obmax = obj.geometry().getBB()
-	w = 0.5*(obmax[0]-obmin[0])
-	h = 0.5*(obmax[1]-obmin[1])
-	correction = max(w,h)
-	R = so3.mul(so3.rotation([0,0,1],random.uniform(0,math.pi*2)),R)
-	t[0] = random.uniform(bmin[0]+correction,bmax[0]-correction)
-	t[1] = random.uniform(bmin[1]+correction,bmax[1]-correction)
-	obj.setTransform(R,t)
-
-def xy_jiggle(world,objects,fixed_objects,bmin,bmax,iters,randomize = True):
-	"""Jiggles the objects' x-y positions within the range bmin - bmax, and randomizes orientation about the z
-	axis until the objects are collision free.  A list of fixed objects (fixed_objects) may be given as well.
-
-	Objects for which collision-free resolutions are not found after iters steps will be
-	deleted from the world.
-	"""
-	if randomize:
-		for obj in objects:
-			xy_randomize(obj,bmin,bmax)
-	inner_iters = 10
-	while iters > 0:
-		numConflicts = [0]*len(objects)
-		for (i,j) in collide.self_collision_iter([o.geometry() for o in objects]):
-			numConflicts[i] += 1
-			numConflicts[j] += 1
-		for (i,j) in collide.group_collision_iter([o.geometry() for o in objects],[o.geometry() for o in fixed_objects]):
-			numConflicts[i] += 1
-		
-		amax = max((c,i) for (i,c) in enumerate(numConflicts))[1]
-		cmax = numConflicts[amax]
-		if cmax == 0:
-			#conflict free
-			return
-		print cmax,"conflicts with object",objects[amax].getName()
-		other_geoms = [o.geometry() for o in objects[:amax]+objects[amax+1:]+fixed_objects]
-		for it in xrange(inner_iters):
-			xy_randomize(objects[amax],bmin,bmax)
-			nc = sum([1 for p in collide.group_collision_iter([objects[amax].geometry()],other_geoms)])
-			if nc < cmax:
-				break
-			iters-=1
-		print "Now",nc,"conflicts with object",objects[amax].getName()
-
-	numConflicts = [0]*len(objects)
-	for (i,j) in collide.self_collision_iter([o.geometry() for o in objects]):
-		numConflicts[i] += 1
-		numConflicts[j] += 1
-	for (i,j) in collide.group_collision_iter([o.geometry() for o in objects],[o.geometry() for o in fixed_objects]):
-		numConflicts[i] += 1
-	removed = []
-	while max(numConflicts) > 0:
-		amax = max((c,i) for (i,c) in enumerate(numConflicts))[1]
-		cmax = numConflicts[amax]
-		print "Unable to find conflict-free configuration, removing object",objects[amax].getName(),"with",cmax,"conflicts"
-		removed.append(amax)
-
-		#revise # of conflicts -- this could be faster, but whatever...
-		numConflicts = [0]*len(objects)
-		for (i,j) in collide.self_collision_iter([o.geometry() for o in objects]):
-			if i in removed or j in removed:
-				continue
-			numConflicts[i] += 1
-			numConflicts[j] += 1
-		for (i,j) in collide.group_collision_iter([o.geometry() for o in objects],[o.geometry() for o in fixed_objects]):
-			if i in removed:
-				continue
-			numConflicts[i] += 1
-	removeIDs = [objects[i].index for i in removed]
-	for i in sorted(removeIDs)[::-1]:
-		world.remove(world.rigidObject(i))
-	raw_input("Press enter to continue")
-
-
-def launch_shelf(robotname,objects):
-	"""Launches the task 2 program that asks the robot to retrieve some set of objects
-	packed within a shelf.
-	"""
-	world = WorldModel()
-	world.loadElement("data/terrains/plane.env")
-	robot = make_moving_base_robot(robotname,world)
-	box = make_box(world,*box_dims)
-	shelf = make_shelf(world,*shelf_dims)
-	shelf.geometry().translate((0,shelf_offset,shelf_height))
-	rigid_objects = []
-	for objectset,objectname in objects:
-		object = make_object(objectset,objectname,world)
-		#TODO: pack in the shelf using x-y translations and z rotations
-		object.setTransform(*se3.mul((so3.identity(),[0,shelf_offset,shelf_height + 0.01]),object.getTransform()))
-		rigid_objects.append(object)
-	xy_jiggle(world,rigid_objects,[shelf],[-0.5*shelf_dims[0],-0.5*shelf_dims[1]+shelf_offset],[0.5*shelf_dims[0],0.5*shelf_dims[1]+shelf_offset],100)
-
-	doedit = True
-	xform = resource.get("shelf/default_initial_%s.xform"%(robotname,),description="Initial hand transform",default=robot.link(5).getTransform(),world=world)
-	if not xform:
-		print "User quit the program"
-		return
-	set_moving_base_xform(robot,xform[0],xform[1])
-
-	#now the simulation is launched
-	program = GLSimulationProgram(world)
-	sim = program.sim
-
-	#setup some simulation parameters
-	visPreshrink = True   #turn this to true if you want to see the "shrunken" models used for collision detection
-	for l in range(robot.numLinks()):
-		sim.body(robot.link(l)).setCollisionPreshrink(visPreshrink)
-	for l in range(world.numRigidObjects()):
-		sim.body(world.rigidObject(l)).setCollisionPreshrink(visPreshrink)
-
-	#create a hand emulator from the given robot name
-	module = importlib.import_module('plugins.'+robotname)
-	#emulator takes the robot index (0), start link index (6), and start driver index (6)
-	hand = module.HandEmulator(sim,0,6,6)
-	sim.addEmulator(0,hand)
-
-	#controlfunc is now attached to control the robot
-	import shelf_controller
-	sim.setController(robot,shelf_controller.make(sim,hand,delta))
-
-	#the next line latches the current configuration in the PID controller...
-	sim.controller(0).setPIDCommand(robot.getConfig(),robot.getVelocity())
-	
-	#this code uses the GLSimulationProgram structure, which gives a little more control over the visualization
-	vis.setPlugin(program)
-	program.reshape(800,600)
-	vis.show()
-	while vis.shown():
-		time.sleep(0.1)
-	return
-	
-	#this code manually updates the vis
-	vis.add("world",world)
-	vis.show()
-	t0 = time.time()
-	while vis.shown():
-		vis.lock()
-		sim.simulate(0.01)
-		sim.updateWorld()
-		vis.unlock()
-		t1 = time.time()
-		time.sleep(max(0.01-(t1-t0),0.001))
-		t0 = t1
-	return
-
 if __name__ == '__main__':
-	import random
-	try:
-		dataset = sys.argv[1]
-	except IndexError:
-		dataset = random.choice(objects.keys())
 
-	#choose the robot model here
-	robot = "reflex_col"
-	#choose the setup here
-	if dataset == 'balls':
-		try:
-			numballs = int(sys.argv[2])
-		except IndexError:
-			numballs = 10
-		launch_balls(robot,numballs)
-	elif dataset == 'shelf':
-		shelved = []
-		if len(sys.argv[2:]) == 0:
-			#default: pick 3 random objects
-			for i in range(3):
-				dataset = random.choice(objects.keys())
-				index = random.randint(0,len(objects[dataset])-1)
-				objname = objects[dataset][index]
-				shelved.append((dataset,objname))
-		elif len(sys.argv[2:]) == 1:
-			try:
-				nobjects = int(sys.argv[2])
-				#default: pick n random objects
-				for i in range(nobjects):
-					dataset = random.choice(objects.keys())
-					index = random.randint(0,len(objects[dataset])-1)
-					objname = objects[dataset][index]
-					shelved.append((dataset,objname))
-			except ValueError:
-				#format: dataset/object
-				for o in sys.argv[2:]:
-					dataset,objname = o.split('/',2)
-					try:
-						index = int(objname)
-						objname = objects[dataset][index]
-					except:
-						pass
-					shelved.append((dataset,objname))
-		else:
-			#format: dataset/object
-			for o in sys.argv[2:]:
-				dataset,objname = o.split('/',2)
-				try:
-					index = int(objname)
-					objname = objects[dataset][index]
-					print "('%s','%s')"%(dataset,objname)
-				except:
-					pass
-				shelved.append((dataset,objname))
-		launch_shelf(robot,shelved)
-	else:
-		#just plan grasping
-		try:
-			index = int(sys.argv[2])
-			objname = objects[dataset][index]
-		except IndexError:
-			index = random.randint(0,len(objects[dataset])-1)
-			objname = objects[dataset][index]
-		except ValueError:
-			objname = sys.argv[2]
-		launch_simple(robot,dataset,objname)
+	parser = argparse.ArgumentParser(description='Picking up object with Klampt')
+	parser.add_argument('--dataset', type=str,
+		default='apc2015')
+
+	parser.add_argument('--robot', type=str,
+		default='reflex_col')
+
+	parser.add_argument('--objname', type=str,
+		default='cheezit_big_original')
+
+	args = parser.parse_args()
+
+	dataset = args.dataset
+	robot = args.robot
+	objname = args.objname
+
+	#just plan grasping
+	launch_simple(robot,dataset,objname)
 	vis.kill()
