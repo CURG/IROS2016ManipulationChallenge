@@ -177,7 +177,7 @@ if __name__ == '__main__':
 	parser.add_argument('--object_name', type=str,
 		default='cheezit_big_original')
 
-	parser.add_argument('xyzrpy', type=float, nargs='+',
+	parser.add_argument('--xyzrpy', type=float, nargs='+',
 		default=[1,2,3,4,5,6])
 
 
